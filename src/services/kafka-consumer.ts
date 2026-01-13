@@ -26,9 +26,12 @@ export class KafkaConsumerService {
     }
 
     try {
-      // Create consumer
+      // Create consumer with explicit commit settings to prevent duplicates
       this.consumer = this.kafka.consumer({
-        groupId: "notification-service-group",
+        groupId: "user-group",
+        sessionTimeout: 30000,
+        heartbeatInterval: 3000,
+        allowAutoTopicCreation: false,
       });
 
       await this.consumer.connect();
@@ -37,8 +40,11 @@ export class KafkaConsumerService {
       // Subscribe to all active topics
       await this.subscribeToTopics();
 
-      // Start consuming messages
+      // Start consuming messages with explicit auto-commit settings
       await this.consumer.run({
+        autoCommit: true,
+        autoCommitInterval: 5000,
+        autoCommitThreshold: 1,
         eachMessage: async (payload: EachMessagePayload) => {
           await this.handleMessage(payload);
         },
@@ -47,8 +53,8 @@ export class KafkaConsumerService {
       this.isRunning = true;
       logger.info("Kafka consumer started");
 
-      // Periodically refresh topic subscriptions (in case new topics are added)
-      this.startTopicRefreshInterval();
+      // Note: KafkaJS doesn't support dynamic subscription changes while running
+      // If new topics are added, the service needs to be restarted to subscribe to them
     } catch (error) {
       logger.error("Error starting Kafka consumer:", error);
       throw error;
@@ -121,23 +127,6 @@ export class KafkaConsumerService {
   }
 
   /**
-   * Refresh topic subscriptions periodically
-   */
-  private startTopicRefreshInterval(): void {
-    // Refresh every 5 minutes
-    setInterval(async () => {
-      if (!this.isRunning || !this.consumer) return;
-
-      try {
-        logger.debug("Refreshing topic subscriptions");
-        await this.subscribeToTopics();
-      } catch (error) {
-        logger.error("Error refreshing topic subscriptions:", error);
-      }
-    }, 5 * 60 * 1000);
-  }
-
-  /**
    * Stop the Kafka consumer
    */
   async stop(): Promise<void> {
@@ -163,4 +152,3 @@ export class KafkaConsumerService {
     return { isRunning: this.isRunning };
   }
 }
-

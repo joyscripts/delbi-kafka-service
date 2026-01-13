@@ -61,6 +61,29 @@ export class TokenManager {
   }
 
   /**
+   * Delete a token by token string (for cleanup of invalid tokens)
+   */
+  static deleteTokenByTokenString(expoPushToken: string): number {
+    const db = getDatabase();
+
+    try {
+      const stmt = db.prepare(`
+        DELETE FROM tokens
+        WHERE expoPushToken = ?
+      `);
+
+      const result = stmt.run(expoPushToken);
+      if (result.changes > 0) {
+        logger.info(`Deleted invalid token: ${expoPushToken.substring(0, 20)}...`);
+      }
+      return result.changes;
+    } catch (error) {
+      logger.error("Error deleting token by token string:", error);
+      throw error;
+    }
+  }
+
+  /**
    * Unregister all tokens for a user
    */
   static unregisterAllUserTokens(username: string): number {
