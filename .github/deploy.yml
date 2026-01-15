@@ -1,0 +1,44 @@
+name: Deploy Kafka Notification Service
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Deploy to server
+        env:
+          SERVER_IP: ${{ secrets.SERVER_IP }}
+          SERVER_USER: ${{ secrets.SSH_USER }}
+          DEPLOY_PATH: /var/backend/kafka-notification-service
+        run: |
+          echo "Deploying Kafka Notification Service to $DEPLOY_PATH"
+
+          ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP << EOF
+            cd $DEPLOY_PATH
+
+            echo "Pulling latest code..."
+            git pull origin main
+
+            echo "Installing dependencies..."
+            npm install
+
+            echo "Building TypeScript code..."
+            npm run build
+
+            echo "Reloading PM2 app..."
+            pm2 reload kafka-notification-service || pm2 start dist/index.js --name kafka-notification-service
+          EOF
