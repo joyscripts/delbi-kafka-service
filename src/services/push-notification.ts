@@ -237,7 +237,24 @@ export class PushNotificationService {
     body: string,
     data?: Record<string, any>
   ): Promise<void> {
-    const tokens = tokenRecords.map((record) => record.expoPushToken);
+    // Extract tokens and deduplicate by token string
+    // This prevents sending duplicate notifications when the same token is registered multiple times
+    const tokenSet = new Set<string>();
+    const tokens: string[] = [];
+    
+    for (const record of tokenRecords) {
+      if (!tokenSet.has(record.expoPushToken)) {
+        tokenSet.add(record.expoPushToken);
+        tokens.push(record.expoPushToken);
+      }
+    }
+    
+    if (tokenRecords.length > tokens.length) {
+      logger.warn(
+        `Deduplicated tokens: ${tokenRecords.length} records -> ${tokens.length} unique tokens`
+      );
+    }
+    
     await this.sendNotifications(tokens, title, body, data);
   }
 

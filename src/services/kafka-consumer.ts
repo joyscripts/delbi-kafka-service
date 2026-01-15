@@ -63,19 +63,19 @@ export class KafkaConsumerService {
 
   /**
    * Subscribe to all active topics from the database
+   * Uses DEFAULT_TOPICS as base and merges with any additional topics from database
    */
   private async subscribeToTopics(): Promise<void> {
     if (!this.consumer) return;
+    
+    // Known topics that will always be subscribed to
+    const DEFAULT_TOPICS = ["53_1290", "18_228"];
 
-    const topics = TokenManager.getAllTopics();
+    // Get topics from database (may be empty if no tokens registered yet)
+    const dbTopics = TokenManager.getAllTopics();
 
-    if (topics.length === 0) {
-      logger.info("No topics to subscribe to");
-      return;
-    }
-
-    // Get unique topics
-    const uniqueTopics = [...new Set(topics)];
+    // Merge default topics with database topics and remove duplicates
+    const uniqueTopics = [...new Set([...DEFAULT_TOPICS, ...dbTopics])];
 
     logger.info(`Subscribing to topics: ${uniqueTopics.join(", ")}`);
 
