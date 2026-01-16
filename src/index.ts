@@ -5,10 +5,13 @@ import { logger } from "./utils/logger";
 import { getDatabase, closeDatabase } from "./services/database";
 import { KafkaConsumerService } from "./services/kafka-consumer";
 import notificationRoutes from "./routes/notifications";
-import healthRoutes from "./routes/health";
+import healthRoutes, { setKafkaConsumer } from "./routes/health";
 
 const app = express();
 const kafkaConsumer = new KafkaConsumerService();
+
+// Make Kafka consumer available to health check
+setKafkaConsumer(kafkaConsumer);
 
 // Middleware
 app.use(cors());
@@ -29,11 +32,32 @@ app.get("/", (req, res) => {
 // Initialize database
 getDatabase();
 
-// Start Kafka consumer
-kafkaConsumer.start().catch((error) => {
-  logger.error("Failed to start Kafka consumer:", error);
-  // Don't exit - the API can still work without Kafka
-});
+// Start Kafka consumer with retry logic
+const startKafkaConsumer = async (retryCount = 0, maxRetries = 5) => {
+  try {
+    await kafkaConsumer.start();
+    logger.info("Kafka consumer started successfully");
+  } catch (error) {
+    logger.error(`Failed to start Kafka consumer (attempt ${retryCount + 1}/${maxRetries}):`, error);
+    
+    if (retryCount < maxRetries) {
+      const delay = Math.min(1000 * Math.pow(2, retryCount), 30000); // Exponential backoff, max 30s
+      logger.info(`Retrying Kafka consumer start in ${delay}ms...`);
+      setTimeout(() => {
+        startKafkaConsumer(retryCount + 1, maxRetries);
+      }, delay);
+    } else {
+      logger.error("Max retries reached. Kafka consumer will not start. API will continue without Kafka.");
+      logger.error("Please check:");
+      logger.error("1. Kafka broker is running and accessible");
+      logger.error("2. Network connectivity to broker");
+      logger.error("3. Firewall rules allow port 9092");
+      logger.error(`4. Broker address: ${config.kafka.broker}`);
+    }
+  }
+};
+
+startKafkaConsumer();
 
 // Graceful shutdown
 const shutdown = async () => {

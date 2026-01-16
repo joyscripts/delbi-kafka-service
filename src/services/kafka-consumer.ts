@@ -13,6 +13,20 @@ export class KafkaConsumerService {
     this.kafka = new Kafka({
       clientId: config.kafka.clientId,
       brokers: config.kafka.broker.split(","),
+      connectionTimeout: 10000, // 10 seconds
+      requestTimeout: 30000, // 30 seconds
+      retry: {
+        initialRetryTime: 100,
+        retries: 8,
+        maxRetryTime: 30000,
+        multiplier: 2,
+        restartOnFailure: async (e) => {
+          logger.error("Kafka connection failed, will retry:", e);
+          return true; // Always retry on failure
+        },
+      },
+      // Add connection options for better error handling
+      logLevel: config.logLevel === "debug" ? 4 : 1, // 1 = ERROR, 4 = DEBUG
     });
   }
 
@@ -32,6 +46,34 @@ export class KafkaConsumerService {
         sessionTimeout: 30000,
         heartbeatInterval: 3000,
         allowAutoTopicCreation: false,
+        maxInFlightRequests: 1,
+        retry: {
+          initialRetryTime: 100,
+          retries: 8,
+          maxRetryTime: 30000,
+        },
+      });
+
+      // Add connection error handlers
+      this.consumer.on("consumer.connect", () => {
+        logger.info("Kafka consumer connected");
+      });
+
+      this.consumer.on("consumer.disconnect", () => {
+        logger.warn("Kafka consumer disconnected");
+        this.isRunning = false;
+      });
+
+      this.consumer.on("consumer.crash", (event: any) => {
+        logger.error("Kafka consumer crashed:", event.payload?.error || event);
+        this.isRunning = false;
+        // Auto-restart after delay
+        setTimeout(() => {
+          logger.info("Attempting to restart Kafka consumer...");
+          this.start().catch((error) => {
+            logger.error("Failed to restart Kafka consumer:", error);
+          });
+        }, 10000); // Wait 10 seconds before retry
       });
 
       await this.consumer.connect();
@@ -150,5 +192,29 @@ export class KafkaConsumerService {
    */
   getStatus(): { isRunning: boolean } {
     return { isRunning: this.isRunning };
+  }
+
+  /**
+   * Test Kafka broker connectivity
+   */
+  async testConnection(): Promise<{ success: boolean; error?: string }> {
+    try {
+      const admin = this.kafka.admin();
+      await admin.connect();
+      const metadata = await admin.describeCluster();
+      await admin.disconnect();
+      
+      logger.info("Kafka connection test successful", {
+        clusterId: metadata.clusterId,
+        brokers: metadata.brokers.length,
+        controller: metadata.controller,
+      });
+      
+      return { success: true };
+    } catch (error: any) {
+      const errorMessage = error.message || String(error);
+      logger.error("Kafka connection test failed:", errorMessage);
+      return { success: false, error: errorMessage };
+    }
   }
 }
