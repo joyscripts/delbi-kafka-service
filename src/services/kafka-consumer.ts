@@ -8,6 +8,9 @@ export class KafkaConsumerService {
   private kafka: Kafka;
   private consumer: Consumer | null = null;
   private isRunning = false;
+  private currentlySubscribedTopics: Set<string> = new Set();
+  private restartTimeout: NodeJS.Timeout | null = null;
+  private isRestarting = false;
 
   constructor() {
     this.kafka = new Kafka({
@@ -132,31 +135,32 @@ export class KafkaConsumerService {
 
   /**
    * Subscribe to all active topics from the database
-   * Uses DEFAULT_TOPICS as base and merges with any additional topics from database
+   * Only subscribes to topics that have registered tokens (no hardcoded defaults)
    */
   private async subscribeToTopics(): Promise<void> {
     if (!this.consumer) return;
-    
-    // Known topics that will always be subscribed to
-    const DEFAULT_TOPICS = ["53_1290", "18_228"];
 
     // Get topics from database (may be empty if no tokens registered yet)
     const dbTopics = TokenManager.getAllTopics();
 
-    // Merge default topics with database topics and remove duplicates
-    const uniqueTopics = [...new Set([...DEFAULT_TOPICS, ...dbTopics])];
-
-    logger.info(`[Kafka] Subscribing to ${uniqueTopics.length} topic(s): ${uniqueTopics.join(", ")}`);
-    if (dbTopics.length > 0) {
-      logger.info(`[Kafka] Topics from database: ${dbTopics.join(", ")}`);
-    } else {
-      logger.warn(`[Kafka] No topics found in database - only using default topics`);
+    if (dbTopics.length === 0) {
+      logger.warn(`[Kafka] No topics found in database - consumer will not subscribe to any topics`);
+      this.currentlySubscribedTopics.clear();
+      return;
     }
+
+    // Remove duplicates and sort for consistent logging
+    const uniqueTopics = [...new Set(dbTopics)].sort();
+
+    logger.info(`[Kafka] Subscribing to ${uniqueTopics.length} topic(s) from database: ${uniqueTopics.join(", ")}`);
 
     await this.consumer.subscribe({
       topics: uniqueTopics,
       fromBeginning: false, // Start from latest messages
     });
+
+    // Update our tracking of subscribed topics
+    this.currentlySubscribedTopics = new Set(uniqueTopics);
     
     logger.info(`[Kafka] Successfully subscribed to all topics`);
   }
@@ -237,11 +241,91 @@ export class KafkaConsumerService {
       await this.consumer.disconnect();
       this.isRunning = false;
       this.consumer = null;
+      this.currentlySubscribedTopics.clear();
       logger.info("Kafka consumer stopped");
     } catch (error) {
       logger.error("Error stopping Kafka consumer:", error);
       throw error;
     }
+  }
+
+  /**
+   * Restart the consumer to pick up new topics
+   * This is called when a new topic is registered
+   */
+  async restart(): Promise<void> {
+    if (this.isRestarting) {
+      logger.debug("[Kafka] Restart already in progress, skipping");
+      return;
+    }
+
+    this.isRestarting = true;
+    logger.info("[Kafka] Restarting consumer to pick up new topics...");
+
+    try {
+      // Stop current consumer
+      await this.stop();
+      
+      // Small delay to ensure clean shutdown
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Start with new topics
+      await this.start();
+      
+      logger.info("[Kafka] Consumer restarted successfully");
+    } catch (error) {
+      logger.error("[Kafka] Error restarting consumer:", error);
+      this.isRestarting = false;
+      throw error;
+    } finally {
+      this.isRestarting = false;
+    }
+  }
+
+  /**
+   * Check if a topic is new (not currently subscribed)
+   * If new, schedule a debounced restart
+   */
+  checkAndRestartIfNeeded(newTopic: string): void {
+    // Check if this topic is already subscribed
+    if (this.currentlySubscribedTopics.has(newTopic)) {
+      logger.debug(`[Kafka] Topic "${newTopic}" is already subscribed, no restart needed`);
+      return;
+    }
+
+    logger.info(`[Kafka] New topic detected: "${newTopic}". Scheduling consumer restart...`);
+
+    // Clear any existing restart timeout
+    if (this.restartTimeout) {
+      clearTimeout(this.restartTimeout);
+    }
+
+    // Debounce: Wait 2 seconds before restarting (in case multiple topics are registered quickly)
+    this.restartTimeout = setTimeout(async () => {
+      try {
+        // Double-check that we still need to restart (topic might have been added during wait)
+        const dbTopics = TokenManager.getAllTopics();
+        const hasNewTopics = dbTopics.some(topic => !this.currentlySubscribedTopics.has(topic));
+        
+        if (hasNewTopics) {
+          logger.info(`[Kafka] Restarting consumer to subscribe to new topic(s)...`);
+          await this.restart();
+        } else {
+          logger.debug(`[Kafka] No new topics found, skipping restart`);
+        }
+      } catch (error) {
+        logger.error("[Kafka] Error during scheduled restart:", error);
+      } finally {
+        this.restartTimeout = null;
+      }
+    }, 2000); // 2 second debounce
+  }
+
+  /**
+   * Get currently subscribed topics (for debugging)
+   */
+  getSubscribedTopics(): string[] {
+    return Array.from(this.currentlySubscribedTopics).sort();
   }
 
   /**

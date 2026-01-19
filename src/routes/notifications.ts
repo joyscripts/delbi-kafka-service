@@ -5,8 +5,17 @@ import {
   TokenUnregisterRequest,
 } from "../types";
 import { logger } from "../utils/logger";
+import { KafkaConsumerService } from "../services/kafka-consumer";
 
 const router = Router();
+let kafkaConsumer: KafkaConsumerService | null = null;
+
+/**
+ * Set the Kafka consumer instance (called from index.ts)
+ */
+export const setKafkaConsumer = (consumer: KafkaConsumerService) => {
+  kafkaConsumer = consumer;
+};
 
 /**
  * POST /api/notifications/register-token
@@ -42,6 +51,13 @@ router.post("/register-token", async (req: Request, res: Response) => {
 
     // Register token
     TokenManager.registerToken(request);
+
+    // Check if this is a new topic and restart consumer if needed
+    if (kafkaConsumer) {
+      kafkaConsumer.checkAndRestartIfNeeded(request.subscriptionData.topic);
+    } else {
+      logger.warn("[Notifications] Kafka consumer not available, cannot check for new topics");
+    }
 
     res.json({
       success: true,

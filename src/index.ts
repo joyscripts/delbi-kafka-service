@@ -4,14 +4,15 @@ import { config } from "./config/env";
 import { logger } from "./utils/logger";
 import { getDatabase, closeDatabase } from "./services/database";
 import { KafkaConsumerService } from "./services/kafka-consumer";
-import notificationRoutes from "./routes/notifications";
-import healthRoutes, { setKafkaConsumer } from "./routes/health";
+import notificationRoutes, { setKafkaConsumer } from "./routes/notifications";
+import healthRoutes, { setKafkaConsumer as setKafkaConsumerForHealth } from "./routes/health";
 
 const app = express();
 const kafkaConsumer = new KafkaConsumerService();
 
-// Make Kafka consumer available to health check
+// Make Kafka consumer available to routes and health check
 setKafkaConsumer(kafkaConsumer);
+setKafkaConsumerForHealth(kafkaConsumer);
 
 // Middleware
 app.use(cors());
