@@ -175,14 +175,10 @@ export class KafkaConsumerService {
       const offset = message.offset;
       const value = message.value?.toString() || "";
 
-      // Log at INFO level so we can always see if messages are being received
+      // Log every message received from Kafka with topic information
       logger.info(
-        `[Kafka] Received message from topic: ${topic}, partition: ${partition}, offset: ${offset}, size: ${value.length} bytes`
+        `[Kafka Message] Topic: ${topic} | Partition: ${partition} | Offset: ${offset} | Size: ${value.length} bytes`
       );
-
-      // Log a preview of the message content (first 200 chars) for debugging
-      const preview = value.length > 200 ? value.substring(0, 200) + "..." : value;
-      logger.debug(`[Kafka] Message preview: ${preview}`);
 
       // Get all tokens subscribed to this topic
       const tokenRecords = TokenManager.getTokensByTopic(topic);
