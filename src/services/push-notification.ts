@@ -306,8 +306,62 @@ export class PushNotificationService {
       if (!body && messageData["DELOPT-DELBI"]) {
         const delbiData = messageData["DELOPT-DELBI"];
 
-        // Try to extract from Mall data first
+        // Try to extract from Entrance data (occupancy notifications)
         if (
+          delbiData.Entrance &&
+          Array.isArray(delbiData.Entrance) &&
+          delbiData.Entrance.length > 0
+        ) {
+          // Find first main entrance (isMain: 1) or use first entrance
+          const entrance = delbiData.Entrance.find((e: any) => e.isMain === 1) || delbiData.Entrance[0];
+          
+          if (
+            entrance.Count &&
+            Array.isArray(entrance.Count) &&
+            entrance.Count.length > 0
+          ) {
+            // Get the latest count entry (last in array)
+            const latestCount = entrance.Count[entrance.Count.length - 1];
+            const name = entrance.Name || "Unknown";
+            const inCount = latestCount.IN || 0;
+            const outCount = latestCount.OUT || 0;
+            const occ = inCount - outCount;
+            timestamp = latestCount.DateTime || "";
+
+            body = `Name:${name} | IN: ${inCount} | OUT: ${outCount} | OCC: ${occ} |`;
+            if (timestamp) {
+              body += `\nTime: ${timestamp}`;
+            }
+          }
+        }
+        // Try to extract from Store data
+        else if (
+          delbiData.Store &&
+          Array.isArray(delbiData.Store) &&
+          delbiData.Store.length > 0
+        ) {
+          const store = delbiData.Store[0]; // Use first store
+          if (
+            store.Count &&
+            Array.isArray(store.Count) &&
+            store.Count.length > 0
+          ) {
+            // Get the latest count entry (last in array)
+            const latestCount = store.Count[store.Count.length - 1];
+            const name = store.Name || store.Code || "Unknown";
+            const inCount = latestCount.IN || 0;
+            const outCount = latestCount.OUT || 0;
+            const occ = inCount - outCount;
+            timestamp = latestCount.DateTime || "";
+
+            body = `Name:${name} | IN: ${inCount} | OUT: ${outCount} | OCC: ${occ} |`;
+            if (timestamp) {
+              body += `\nTime: ${timestamp}`;
+            }
+          }
+        }
+        // Try to extract from Mall data (legacy format)
+        else if (
           delbiData.Mall &&
           Array.isArray(delbiData.Mall) &&
           delbiData.Mall.length > 0
@@ -332,7 +386,7 @@ export class PushNotificationService {
             }
           }
         }
-        // Fallback to Zone data
+        // Fallback to Zone data (legacy format)
         else if (
           delbiData.Zone &&
           Array.isArray(delbiData.Zone) &&
@@ -361,7 +415,14 @@ export class PushNotificationService {
 
         // Fallback if no data extracted
         if (!body) {
-          if (delbiData.Mall && Array.isArray(delbiData.Mall)) {
+          if (delbiData.Entrance && Array.isArray(delbiData.Entrance)) {
+            const mainEntrances = delbiData.Entrance.filter((e: any) => e.isMain === 1);
+            body = mainEntrances.length > 0 
+              ? `${mainEntrances.length} entrance(s) updated`
+              : `${delbiData.Entrance.length} entrance(s) updated`;
+          } else if (delbiData.Store && Array.isArray(delbiData.Store)) {
+            body = `${delbiData.Store.length} store(s) updated`;
+          } else if (delbiData.Mall && Array.isArray(delbiData.Mall)) {
             body = `${delbiData.Mall.length} mall(s) updated`;
           } else if (delbiData.Zone && Array.isArray(delbiData.Zone)) {
             body = `${delbiData.Zone.length} zone(s) updated`;

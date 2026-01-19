@@ -40,16 +40,24 @@ export class KafkaConsumerService {
     }
 
     try {
-      // Create consumer with explicit commit settings to prevent duplicates
+      // Create consumer with optimized settings to prevent rebalancing issues
+      // Key settings:
+      // - sessionTimeout: How long broker waits for heartbeat before considering consumer dead
+      // - heartbeatInterval: How often to send heartbeats (should be < sessionTimeout/3)
+      // - rebalanceTimeout: How long to wait during rebalancing
+      // Note: KafkaJS doesn't support maxPollInterval, but heartbeats continue automatically
+      // during message processing, so long operations won't cause rebalancing as long as
+      // they complete within sessionTimeout (30s). Expo API calls are typically < 5s.
       this.consumer = this.kafka.consumer({
         groupId: "user-group",
-        sessionTimeout: 60000,
-        heartbeatInterval: 6000,
+        sessionTimeout: 30000, // 30 seconds - reduced for faster failure detection
+        heartbeatInterval: 3000, // 3 seconds - send heartbeat every 3s (should be < sessionTimeout/3)
+        rebalanceTimeout: 60000, // 60 seconds - time to wait during rebalancing
         allowAutoTopicCreation: false,
-        maxInFlightRequests: 1,
+        maxInFlightRequests: 1, // Process one message at a time to maintain order
         retry: {
           initialRetryTime: 100,
-          : 8,
+          retries: 8,
           maxRetryTime: 30000,
         },
       });
@@ -76,19 +84,34 @@ export class KafkaConsumerService {
         }, 10000); // Wait 10 seconds before retry
       });
 
+      // Note: KafkaJS doesn't expose rebalancing events directly
+      // Rebalancing is handled automatically by the library
+      // The heartbeatInterval ensures heartbeats continue during processing
+
       await this.consumer.connect();
       logger.info("Connected to Kafka broker");
 
       // Subscribe to all active topics
       await this.subscribeToTopics();
 
-      // Start consuming messages with explicit auto-commit settings
+      // Start consuming messages with optimized commit settings
+      // Note: We process messages asynchronously to avoid blocking heartbeats
+      // The await in handleMessage ensures we don't process the next message until current one completes
+      // This maintains message order while allowing heartbeats to continue
       await this.consumer.run({
         autoCommit: true,
-        autoCommitInterval: 5000,
-        autoCommitThreshold: 1,
+        autoCommitInterval: 10000, // 10 seconds - commit every 10s or after each message
+        autoCommitThreshold: 1, // Commit after each message
         eachMessage: async (payload: EachMessagePayload) => {
-          await this.handleMessage(payload);
+          // Process message - this is async but we await it to maintain order
+          // Heartbeats continue in the background via heartbeatInterval
+          try {
+            await this.handleMessage(payload);
+          } catch (error) {
+            // Log error but don't throw - we want to continue processing
+            // The error is already logged in handleMessage
+            logger.error("Error in eachMessage handler:", error);
+          }
         },
       });
 
@@ -129,8 +152,14 @@ export class KafkaConsumerService {
 
   /**
    * Handle incoming Kafka message
+   * 
+   * Note: This method is awaited, which means we process messages sequentially.
+   * However, heartbeats continue automatically in the background via heartbeatInterval.
+   * Processing should complete within sessionTimeout (30s) to avoid rebalancing.
+   * Expo API calls are typically fast (< 5s), so this should not be an issue.
    */
   private async handleMessage(payload: EachMessagePayload): Promise<void> {
+    const startTime = Date.now();
     try {
       const { topic, partition, message } = payload;
       const offset = message.offset;
@@ -153,6 +182,7 @@ export class KafkaConsumerService {
       );
 
       // Send push notification
+      // This is async and may take time (Expo API calls), but heartbeats continue in background
       await PushNotificationService.sendNotificationFromKafkaMessage(
         tokenRecords,
         {
@@ -162,9 +192,23 @@ export class KafkaConsumerService {
           value,
         }
       );
+
+      const duration = Date.now() - startTime;
+      if (duration > 10000) {
+        logger.warn(
+          `Message processing took ${duration}ms (${(duration / 1000).toFixed(1)}s) - consider optimizing if this happens frequently`
+        );
+      } else {
+        logger.debug(`Message processed in ${duration}ms`);
+      }
     } catch (error) {
-      logger.error("Error handling Kafka message:", error);
+      const duration = Date.now() - startTime;
+      logger.error(
+        `Error handling Kafka message (took ${duration}ms):`,
+        error
+      );
       // Don't throw - we want to continue processing other messages
+      // The error is logged, and we'll move on to the next message
     }
   }
 
