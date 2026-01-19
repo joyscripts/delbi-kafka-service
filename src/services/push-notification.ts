@@ -271,6 +271,10 @@ export class PushNotificationService {
     }
   ): Promise<void> {
     try {
+      logger.info(
+        `[Notification] Processing Kafka message for ${tokenRecords.length} token(s), topic: ${kafkaMessage.topic}`
+      );
+
       // Parse message value (assuming JSON format)
       let messageData: any;
       const value =
@@ -280,8 +284,10 @@ export class PushNotificationService {
 
       try {
         messageData = JSON.parse(value);
-      } catch {
+        logger.debug(`[Notification] Parsed JSON message data, keys: ${Object.keys(messageData).join(", ")}`);
+      } catch (parseError) {
         // If not JSON, send simple notification
+        logger.warn(`[Notification] Message is not valid JSON, sending fallback notification`);
         await this.sendNotificationToTopic(
           tokenRecords,
           "New Update",
@@ -293,6 +299,7 @@ export class PushNotificationService {
             offset: kafkaMessage.offset,
           }
         );
+        logger.info(`[Notification] Fallback notification sent to ${tokenRecords.length} token(s)`);
         return;
       }
 
@@ -452,12 +459,18 @@ export class PushNotificationService {
         // The app can fetch the full data when needed
       };
 
+      logger.info(
+        `[Notification] Sending notification - Title: "${title}", Body: "${body.substring(0, 100)}${body.length > 100 ? "..." : ""}"`
+      );
+
       await this.sendNotificationToTopic(
         tokenRecords,
         title,
         body,
         minimalData
       );
+
+      logger.info(`[Notification] Notification sent successfully to ${tokenRecords.length} token(s)`);
     } catch (error) {
       logger.error("Error processing Kafka message for notification:", error);
       throw error;

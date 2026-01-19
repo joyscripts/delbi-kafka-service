@@ -93,6 +93,9 @@ export class KafkaConsumerService {
 
       // Subscribe to all active topics
       await this.subscribeToTopics();
+      
+      // Log subscription status
+      logger.info(`[Kafka] Consumer subscribed and ready to receive messages`);
 
       // Start consuming messages with optimized commit settings
       // Note: We process messages asynchronously to avoid blocking heartbeats
@@ -142,12 +145,19 @@ export class KafkaConsumerService {
     // Merge default topics with database topics and remove duplicates
     const uniqueTopics = [...new Set([...DEFAULT_TOPICS, ...dbTopics])];
 
-    logger.info(`Subscribing to topics: ${uniqueTopics.join(", ")}`);
+    logger.info(`[Kafka] Subscribing to ${uniqueTopics.length} topic(s): ${uniqueTopics.join(", ")}`);
+    if (dbTopics.length > 0) {
+      logger.info(`[Kafka] Topics from database: ${dbTopics.join(", ")}`);
+    } else {
+      logger.warn(`[Kafka] No topics found in database - only using default topics`);
+    }
 
     await this.consumer.subscribe({
       topics: uniqueTopics,
       fromBeginning: false, // Start from latest messages
     });
+    
+    logger.info(`[Kafka] Successfully subscribed to all topics`);
   }
 
   /**
@@ -165,20 +175,26 @@ export class KafkaConsumerService {
       const offset = message.offset;
       const value = message.value?.toString() || "";
 
-      logger.debug(
-        `Received message from topic: ${topic}, partition: ${partition}, offset: ${offset}`
+      // Log at INFO level so we can always see if messages are being received
+      logger.info(
+        `[Kafka] Received message from topic: ${topic}, partition: ${partition}, offset: ${offset}, size: ${value.length} bytes`
       );
+
+      // Log a preview of the message content (first 200 chars) for debugging
+      const preview = value.length > 200 ? value.substring(0, 200) + "..." : value;
+      logger.debug(`[Kafka] Message preview: ${preview}`);
 
       // Get all tokens subscribed to this topic
       const tokenRecords = TokenManager.getTokensByTopic(topic);
 
+      // Log at WARN level so we can see if this is the issue
       if (tokenRecords.length === 0) {
-        logger.debug(`No tokens found for topic: ${topic}`);
+        logger.warn(`[Kafka] No tokens found for topic: ${topic} - message will be ignored`);
         return;
       }
 
       logger.info(
-        `Processing message for topic ${topic}, sending to ${tokenRecords.length} token(s)`
+        `[Kafka] Processing message for topic ${topic}, sending to ${tokenRecords.length} token(s)`
       );
 
       // Send push notification
