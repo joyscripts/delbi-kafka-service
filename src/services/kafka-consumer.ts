@@ -43,13 +43,13 @@ export class KafkaConsumerService {
       // Create consumer with explicit commit settings to prevent duplicates
       this.consumer = this.kafka.consumer({
         groupId: "user-group",
-        sessionTimeout: 30000,
-        heartbeatInterval: 3000,
+        sessionTimeout: 60000,
+        heartbeatInterval: 6000,
         allowAutoTopicCreation: false,
         maxInFlightRequests: 1,
         retry: {
           initialRetryTime: 100,
-          retries: 8,
+          : 8,
           maxRetryTime: 30000,
         },
       });
