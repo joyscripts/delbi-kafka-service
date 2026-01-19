@@ -109,6 +109,7 @@ export class KafkaConsumerService {
           // Process message - this is async but we await it to maintain order
           // Heartbeats continue in the background via heartbeatInterval
           try {
+            logger.info(`[Kafka] Received message from topic: ${payload.topic}, partition: ${payload.partition}, offset: ${payload.message.offset}, size: ${payload.message.value?.length || 0} bytes`);
             await this.handleMessage(payload);
           } catch (error) {
             // Log error but don't throw - we want to continue processing
