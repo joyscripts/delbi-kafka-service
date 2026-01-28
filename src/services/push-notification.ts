@@ -2,6 +2,7 @@ import { Expo } from "expo-server-sdk";
 import { TokenRecord } from "../types";
 import { logger } from "../utils/logger";
 import { TokenManager } from "./token-manager";
+import { NotificationManager } from "./notification-manager";
 
 // Create a new Expo SDK client
 const expo = new Expo();
@@ -288,6 +289,26 @@ export class PushNotificationService {
       } catch (parseError) {
         // If not JSON, send simple notification
         logger.warn(`[Notification] Message is not valid JSON, sending fallback notification`);
+        // Save fallback notification to database
+        const uniqueUsernames = new Set<string>();
+        tokenRecords.forEach(record => {
+          if (!uniqueUsernames.has(record.username)) {
+            uniqueUsernames.add(record.username);
+            try {
+              NotificationManager.saveNotification(
+                record.username,
+                "New Update",
+                "You have a new data update",
+                undefined,
+                kafkaMessage.topic,
+                kafkaMessage.offset
+              );
+            } catch (error) {
+              logger.error(`[Notification] Failed to save fallback notification for ${record.username}:`, error);
+            }
+          }
+        });
+
         await this.sendNotificationToTopic(
           tokenRecords,
           "New Update",
@@ -299,7 +320,7 @@ export class PushNotificationService {
             offset: kafkaMessage.offset,
           }
         );
-        logger.info(`[Notification] Fallback notification sent to ${tokenRecords.length} token(s)`);
+        logger.info(`[Notification] Fallback notification sent to ${tokenRecords.length} token(s) and saved for ${uniqueUsernames.size} user(s)`);
         return;
       }
 
@@ -463,6 +484,41 @@ export class PushNotificationService {
         `[Notification] Sending notification - Title: "${title}", Body: "${body.substring(0, 100)}${body.length > 100 ? "..." : ""}"`
       );
 
+      // Determine notification type from topic or message data
+      let notificationType: string | undefined;
+      if (kafkaMessage.topic) {
+        // Extract type from topic if it contains hourly/daily/monthly indicators
+        const topicLower = kafkaMessage.topic.toLowerCase();
+        if (topicLower.includes("hourly") || topicLower.includes("h_")) {
+          notificationType = "hourly-alert";
+        } else if (topicLower.includes("daily") || topicLower.includes("d_")) {
+          notificationType = "daily-alert";
+        } else if (topicLower.includes("monthly") || topicLower.includes("m_")) {
+          notificationType = "monthly-alert";
+        }
+      }
+
+      // Save notification to database for each unique username
+      const uniqueUsernames = new Set<string>();
+      tokenRecords.forEach(record => {
+        if (!uniqueUsernames.has(record.username)) {
+          uniqueUsernames.add(record.username);
+          try {
+            NotificationManager.saveNotification(
+              record.username,
+              title,
+              body,
+              notificationType,
+              kafkaMessage.topic,
+              kafkaMessage.offset
+            );
+          } catch (error) {
+            logger.error(`[Notification] Failed to save notification for ${record.username}:`, error);
+            // Don't throw - continue sending push notifications even if DB save fails
+          }
+        }
+      });
+
       await this.sendNotificationToTopic(
         tokenRecords,
         title,
@@ -470,7 +526,7 @@ export class PushNotificationService {
         minimalData
       );
 
-      logger.info(`[Notification] Notification sent successfully to ${tokenRecords.length} token(s)`);
+      logger.info(`[Notification] Notification sent successfully to ${tokenRecords.length} token(s) and saved for ${uniqueUsernames.size} user(s)`);
     } catch (error) {
       logger.error("Error processing Kafka message for notification:", error);
       throw error;

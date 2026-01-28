@@ -98,6 +98,30 @@ const initializeSchema = () => {
     CREATE INDEX IF NOT EXISTS idx_expoPushToken ON tokens(expoPushToken);
   `);
 
+  // Create notifications table to store all notifications
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      type TEXT,
+      topic TEXT,
+      kafkaOffset TEXT,
+      isRead INTEGER NOT NULL DEFAULT 0,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+      readAt TEXT
+    );
+  `);
+
+  // Create indexes for notifications
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_notifications_username ON notifications(username);
+    CREATE INDEX IF NOT EXISTS idx_notifications_createdAt ON notifications(createdAt DESC);
+    CREATE INDEX IF NOT EXISTS idx_notifications_isRead ON notifications(isRead);
+    CREATE INDEX IF NOT EXISTS idx_notifications_username_createdAt ON notifications(username, createdAt DESC);
+  `);
+
   logger.info("Database schema initialized");
 };
 
